@@ -65,7 +65,9 @@ async function run(options: { api?: string; heads?: string[]; maxRounds?: number
 	const h = hydra;
 	const heads = options.heads ?? [headFile("checker")];
 	const onRecord = (record: HydraRecord) => records.push(record);
-	const Agent = options.agent?.(h, heads, onRecord) ?? function Agent() { useModel("test/m"); h.useHydra(heads, { onRecord }); return "You answer questions."; };
+	const finals: string[] = [];
+	const onFinal = ({ text }: { text: string }) => finals.push(text);
+	const Agent = options.agent?.(h, heads, onRecord) ?? function Agent() { useModel("test/m"); h.useHydra(heads, { onRecord, onFinal }); return "You answer questions."; };
 	runtime = await start({ agents: [{ agent: Agent, name: "agent" }], providers: [h.wrap(model.provider)] });
 	const handle = init(Agent);
 	const replies: any[] = [];
@@ -74,7 +76,7 @@ async function run(options: { api?: string; heads?: string[]; maxRounds?: number
 		replies.push(options.tolerateFailures ? await reply.catch((error: unknown) => error) : await reply);
 	}
 	unobserve();
-	return { replies, records, logs, sent: model.sent };
+	return { replies, records, finals, logs, sent: model.sent };
 }
 
 describe("pi-hydra heads in Flue", () => {
@@ -83,7 +85,9 @@ describe("pi-hydra heads in Flue", () => {
 			driver: (_sent, i) => fauxAssistantMessage(i === 0 ? "17 × 23 = 401" : "Corrected: 391"),
 			head: (_sent, i) => (i === 0 ? findings({ action: "steer", message: "17 × 23 is 391 <not 401> & check \"tools\"" }) : findings()),
 		});
-		expect(result.replies[0].text).toMatch(/Corrected: 391$/);
+		// Flue's reply text holds the whole response, the corrected answer included; onFinal has only the final step.
+		expect(result.replies[0].text).toBe("17 × 23 = 401\n\nCorrected: 391");
+		expect(result.finals).toEqual(["Corrected: 391"]);
 		expect(result.records.map((r) => [r.round, r.outcome])).toEqual([[0, "findings"], [1, "none"]]);
 		const [driver1, head1, driver2] = result.sent;
 		// The head replays the driver's request unchanged, then the final answer, then its prompt.

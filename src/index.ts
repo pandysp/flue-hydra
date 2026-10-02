@@ -52,6 +52,12 @@ export interface FlueHydraOptions {
 export interface UseHydraOptions {
 	/** Called once per head check of this agent. */
 	onRecord?: (record: HydraRecord) => void;
+	/**
+	 * Called once when a checked response is about to settle, with the text of its final step: the answer
+	 * the heads left standing. Flue's reply text (`AgentReply.text`) of a corrected response also contains
+	 * the earlier, corrected answers. Not called when no request of the response was recorded.
+	 */
+	onFinal?: (final: { text: string }) => void;
 }
 
 export interface HydraRecord {
@@ -297,7 +303,7 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 		}
 	}
 
-	async function review(ctx: AgentFinishContext, heads: HeadDefinition[], onRecord: UseHydraOptions["onRecord"]): Promise<void> {
+	async function review(ctx: AgentFinishContext, heads: HeadDefinition[], { onRecord, onFinal }: UseHydraOptions): Promise<void> {
 		const current = scope.getStore();
 		const conversationId = current?.conversationId;
 		const state = conversationId ? conversations.get(conversationId) : undefined;
@@ -312,43 +318,51 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 			failAll(conversationId ?? "unknown", 0, "no-capture", "no recorded request for this response; is the agent's provider wrapped with hydra.wrap()?");
 			return;
 		}
-		if (!SUPPORTED_APIS.has(state.capture.model.api as string)) {
-			failAll(conversationId, state.rounds, "unsupported-api", `provider API ${state.capture.model.api} is not supported (anthropic-messages, openai-codex-responses)`);
-			return;
-		}
-		const records = await Promise.all(heads.map((head) => check(head, state, conversationId, ctx.signal)));
-		const steering = (record: HydraRecord) => record.findings.some((decision) => decision.action !== "print");
-		const unresolved = state.rounds >= maxRounds && records.some(steering);
-		const steers: { head: string; decision: Decision }[] = [];
-		for (const record of records) {
-			report({ ...record, unresolved: unresolved && steering(record) });
-			for (const decision of record.findings) {
-				if (decision.action === "print") {
-					ctx.log.info(`[pi-hydra ${record.head}] ${decision.message}`, { head: record.head, reason: decision.reason });
-					state.ledger.succeed({ head: record.head, delivery: "print", message: decision.message });
-				} else steers.push({ head: record.head, decision });
+		// Returns whether feedback was appended, so the response goes on instead of settling.
+		const steer = async (capture: Capture): Promise<boolean> => {
+			if (!SUPPORTED_APIS.has(capture.model.api as string)) {
+				failAll(conversationId, state.rounds, "unsupported-api", `provider API ${capture.model.api} is not supported (anthropic-messages, openai-codex-responses)`);
+				return false;
 			}
-		}
-		if (steers.length === 0) return;
-		const body = steers.map(({ head, decision }) => `[pi-hydra ${head}] ${decision.message}`).join("\n");
-		if (state.rounds >= maxRounds) {
-			ctx.log.warn(`[pi-hydra] unresolved after ${maxRounds} rounds of feedback; the response settles with these findings open:\n${body}`);
-			return;
-		}
-		ctx.append({ kind: "signal", type: "pi-hydra", tagName: "pi-hydra", body });
-		for (const { head, decision } of steers) state.ledger.succeed({ head, delivery: "steer", message: decision.message });
-		state.rounds++;
+			const records = await Promise.all(heads.map((head) => check(head, state, conversationId, ctx.signal)));
+			const steering = (record: HydraRecord) => record.findings.some((decision) => decision.action !== "print");
+			const unresolved = state.rounds >= maxRounds && records.some(steering);
+			const steers: { head: string; decision: Decision }[] = [];
+			for (const record of records) {
+				report({ ...record, unresolved: unresolved && steering(record) });
+				for (const decision of record.findings) {
+					if (decision.action === "print") {
+						ctx.log.info(`[pi-hydra ${record.head}] ${decision.message}`, { head: record.head, reason: decision.reason });
+						state.ledger.succeed({ head: record.head, delivery: "print", message: decision.message });
+					} else steers.push({ head: record.head, decision });
+				}
+			}
+			if (steers.length === 0) return false;
+			const body = steers.map(({ head, decision }) => `[pi-hydra ${head}] ${decision.message}`).join("\n");
+			if (unresolved) {
+				ctx.log.warn(`[pi-hydra] unresolved after ${maxRounds} rounds of feedback; the response settles with these findings open:\n${body}`);
+				return false;
+			}
+			ctx.append({ kind: "signal", type: "pi-hydra", tagName: "pi-hydra", body });
+			for (const { head, decision } of steers) state.ledger.succeed({ head, delivery: "steer", message: decision.message });
+			state.rounds++;
+			return true;
+		};
+		if (await steer(state.capture)) return;
+		// The response settles: its final step is the answer the heads left standing.
+		const final = state.tail?.find((message): message is AssistantMessage => message.role === "assistant");
+		onFinal?.({ text: final ? final.content.filter((part) => part.type === "text").map((part) => part.text).join("") : "" });
 	}
 
 	return {
 		wrap,
-		useHydra: (paths: string[], { onRecord }: UseHydraOptions = {}) => {
+		useHydra: (paths: string[], options: UseHydraOptions = {}) => {
 			const heads = loadHeads(paths);
 			useAgentStart(() => {
 				const id = scope.getStore()?.conversationId;
 				if (id) conversation(id);
 			});
-			useAgentFinish((ctx) => review(ctx, heads, onRecord));
+			useAgentFinish((ctx) => review(ctx, heads, options));
 		},
 		close: async () => {
 			await uninstall();

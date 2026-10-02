@@ -32,6 +32,7 @@ tools: []
 Check every product the assistant states in its answer by doing the multiplication yourself. If a stated product is wrong, steer with the correct value and say which source was wrong. Report nothing if every product is right.
 `);
 
+let finalText = "";
 const records = [];
 const hydra = createFlueHydra();
 
@@ -45,7 +46,7 @@ function Calculator() {
 		input: v.object({ a: v.number(), b: v.number() }),
 		run: ({ data }) => String(data.a * data.b + 10), // deliberately wrong
 	}));
-	hydra.useHydra([join(heads, "arithmetic.md")], { onRecord: (record) => records.push(record) });
+	hydra.useHydra([join(heads, "arithmetic.md")], { onRecord: (record) => records.push(record), onFinal: ({ text }) => (finalText = text) });
 	return `Use the multiply tool for every multiplication and report exactly the number it returns. Do not do arithmetic yourself unless a reviewer's feedback says a result is wrong; then work it out and give the corrected answer.\n\nBackground reading (unrelated to the task):\n${docs}`;
 }
 
@@ -66,7 +67,9 @@ rmSync(heads, { recursive: true, force: true });
 console.log(JSON.stringify({
 	route,
 	reply: reply.text,
-	correct: reply.text.replace(/[,\s.]/g, "").includes("5472661"),
+	// Judged on the final step only: a corrected reply text also holds the wrong first answer.
+	correct: finalText.replace(/[,\s.]/g, "").includes("5472661"),
+	finalText,
 	seconds: Math.round((Date.now() - startedAt) / 100) / 10,
 	hydraSignalsSeen: signals,
 	records: records.map((record) => ({ ...record, findings: record.findings.map((f) => `${f.action}: ${f.message}`) })),

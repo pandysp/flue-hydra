@@ -48,10 +48,11 @@ Three pieces work together:
 
 - `hydra.wrap(provider)` records the requests of agents that call `useHydra()`; other agents' requests
   pass through untouched. Use the wrapped provider in `start({ providers })` or `setProvider()`.
-- `hydra.useHydra(heads, { onRecord })` inside the agent function names the head files that review this
-  agent and runs them when a response is about to settle. Different agents can use different heads.
-  `onRecord` (optional) is called once per head check with the conversation, head, round, outcome,
-  findings, any error, the token usage and whether its findings stayed `unresolved`.
+- `hydra.useHydra(heads, { onRecord, onFinal })` inside the agent function names the head files that
+  review this agent and runs them when a response is about to settle. Different agents can use
+  different heads. `onRecord` (optional) is called once per head check with the conversation, head,
+  round, outcome, findings, any error, the token usage and whether its findings stayed `unresolved`.
+  `onFinal` (optional) receives the response's final answer ([below](#what-happens-to-findings)).
 - `createFlueHydra()` installs one Flue instrumentation, which tells Hydra which conversation
   each request belongs to. `close()` removes it.
 
@@ -94,6 +95,11 @@ counted per response: the next response starts fresh.
 A check that fails (provider error, malformed answer, unsupported provider) is logged as a
 warning and recorded; the response settles unchanged.
 
+A corrected response keeps its earlier answers: Flue's reply text (`AgentReply.text`) joins the text
+of every step of the response, so it reads "first answer", blank line, "corrected answer". To get only
+the answer the heads left standing, pass `onFinal` to `useHydra()`; it is called once when the
+response settles, with the text of its final step.
+
 ## Providers
 
 Supported: Anthropic Messages and OpenAI Codex. Other provider APIs are reported as failed checks.
@@ -109,16 +115,15 @@ the [measurements](#measurements) below.
 
 - **Run end only.** Heads check when a response is about to settle, not while it runs. A long
   response is not interrupted mid-way.
-- **Advisory, like pi-hydra.** If the process stops while heads are checking, Flue 2.2.2 settles
-  the response as successful after restart without running the check again
-  ([withastro/flue#810](https://github.com/withastro/flue/issues/810)).
+- **Advisory, like pi-hydra.** A response that was running when the process stopped is not checked
+  after a restart. If the heads were already checking, Flue 2.2.2 settles it without running them
+  again ([withastro/flue#810](https://github.com/withastro/flue/issues/810)); otherwise Flue does not
+  repeat the start of a response it already took in, so nothing is recorded to replay and the check
+  is reported as failed (`no-capture`).
 - **Added time.** The response waits for the slowest head before it settles: 1.1–10.1 s per round
   in the measured runs (October 1–2, 2026), with one Anthropic check at 58.7 s.
 - **After compaction** the agent's request starts with a fresh summary, so the first check reads
   less from cache.
-- **Claude subscription logins.** Whether a request counts against the plan or is refused as
-  third-party use depends on what it contains. Flue requests have been accepted on the plan in
-  every test so far; pi's own requests without an extra billing extension were refused.
 
 ## Measurements
 
