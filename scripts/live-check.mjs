@@ -35,7 +35,8 @@ Check every product the assistant states in its answer by doing the multiplicati
 const records = [];
 const hydra = createFlueHydra({ onRecord: (record) => records.push(record) });
 
-const docs = readFileSync(new URL("../docs/architecture.md", import.meta.url), "utf8"); // a long, stable prefix
+// A long, stable prefix: pi-hydra's architecture notes, installed with its pinned core.
+const docs = readFileSync(new URL("../node_modules/pi-hydra/docs/architecture.md", import.meta.url), "utf8");
 function Calculator() {
 	useModel(`${inner.id}/${modelId}`, { thinkingLevel: "low" });
 	useTool(defineTool({
@@ -68,5 +69,5 @@ console.log(JSON.stringify({
 	correct: reply.text.replace(/[,\s.]/g, "").includes("5472661"),
 	seconds: Math.round((Date.now() - startedAt) / 100) / 10,
 	hydraSignalsSeen: signals,
-	records: records.map(({ head, round, outcome, findings, errorKind, error, usage, durationMs }) => ({ head, round, outcome, findings: findings.map((f) => `${f.action}: ${f.message}`), errorKind, error, usage, durationMs })),
+	records: records.map((record) => ({ ...record, findings: record.findings.map((f) => `${f.action}: ${f.message}`) })),
 }, null, 2));

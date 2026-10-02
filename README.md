@@ -112,8 +112,8 @@ the [measurements](#measurements) below.
 - **Advisory, like pi-hydra.** If the process stops while heads are checking, Flue 2.2.2 settles
   the response as successful after restart without running the check again
   ([withastro/flue#810](https://github.com/withastro/flue/issues/810)).
-- **Added time.** The response waits for the slowest head before it settles: 1.1–7.1 s per round
-  in the measured runs.
+- **Added time.** The response waits for the slowest head before it settles: 1.1–10.1 s per round
+  in the measured runs (October 1–2, 2026), with one Anthropic check at 58.7 s.
 - **After compaction** the agent's request starts with a fresh summary, so the first check reads
   less from cache.
 - **Claude subscription logins.** Whether a request counts against the plan or is refused as
@@ -128,7 +128,7 @@ run-end check: the agent's last request, its last turn and the head prompt.
 
 | Provider | First check of a response | Check after a correction |
 |---|---|---|
-| Anthropic, Opus 5.5 | 5,974–6,053 of about 6,760–7,000 input tokens read from cache in 7/7 runs; the rest is the final turn written to cache plus 4 new tokens; $0.006–$0.011 per check where recorded, 2.5–7.1 s | 6,209 and 6,382 of about 7,200–7,280 read (2 runs) |
+| Anthropic, Opus 5.5 | 5,974–6,091 of about 6,760–7,000 input tokens read from cache in 11/11 runs; the rest is the final turn written to cache plus 4 new tokens; $0.006–$0.011 per check where recorded, 2.5–10.1 s, once 58.7 s | 6,209–6,382 of about 7,200–7,280 read (5 runs) |
 | Codex, GPT-5.5, heads on the agent's session | 3,584 of 3,922–3,964 read in 10/14 runs, 2,560 in 4/14, never 0; 2.0–5.6 s | 2,560 of about 4,030–4,075 read in 14/14 runs |
 | Codex, heads on their own session | 3,584 read in 4/7 runs, 0 in 3/7 | 2,560 read in 7/7 runs |
 
