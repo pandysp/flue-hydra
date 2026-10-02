@@ -46,8 +46,8 @@ await hydra.close(); // also closes the Codex connections Hydra kept open
 
 Three pieces work together:
 
-- `hydra.wrap(provider)` records each request the agent sends. Use the wrapped provider in
-  `start({ providers })` or `setProvider()`.
+- `hydra.wrap(provider)` records the requests of agents that call `useHydra()`; other agents' requests
+  pass through untouched. Use the wrapped provider in `start({ providers })` or `setProvider()`.
 - `hydra.useHydra(heads, { onRecord })` inside the agent function names the head files that review this
   agent and runs them when a response is about to settle. Different agents can use different heads.
   `onRecord` (optional) is called once per head check with the conversation, head, round, outcome,
@@ -98,7 +98,7 @@ warning and recorded; the response settles unchanged.
 
 Supported: Anthropic Messages and OpenAI Codex. Other provider APIs are reported as failed checks.
 
-For Codex, Hydra runs the agent on pi-ai's `websocket` transport instead of its default `auto`,
+For Codex, Hydra runs agents that use heads on pi-ai's `websocket` transport instead of its default `auto`,
 and the heads share the agent's provider session. Codex caches by session, and sharing is safe
 only while the agent sends its full input every turn, which `auto` does not. This is the one
 change Hydra makes to the agent itself. A caller that sets a continuing transport explicitly gets
@@ -132,10 +132,12 @@ run-end check: the agent's last request, its last turn and the head prompt.
 | Codex, GPT-5.5, heads on the agent's session | 3,584 of 3,922–3,964 read in 10/14 runs, 2,560 in 4/14, never 0; 2.0–5.6 s | 2,560 of about 4,030–4,075 read in 14/14 runs |
 | Codex, heads on their own session | 3,584 read in 4/7 runs, 0 in 3/7 | 2,560 read in 7/7 runs |
 
-On October 2, with this package (heads in `useHydra(heads)`), 3 Anthropic runs read 6,091 of 6,800–6,924 on
-the first check and 6,234 and 6,246 of 7,251–7,279 after a correction (2 runs; in the third the model fixed
-the answer itself), at 4.5–10.1 s per check with one at 58.7 s; 2 Codex runs read 2,560 of 3,991 and then
-2,560 of 4,084–4,114, at 3.2–4.6 s.
+On October 2, with this package, 4 Anthropic runs read 6,091–6,117 of 6,800–6,924 on the first check and
+6,234–6,252 of 7,251–7,279 after a correction (3 runs; in the fourth the model fixed the answer itself), at
+4.1–10.1 s per check with one at 58.7 s. 11 Codex runs on the agent's session read 3,584 of 3,991 on the
+first check in 5, 2,560 in 4 and **0 in 2**, then 2,560 of about 4,090–4,110 after a correction in 9 of 10
+and 0 in 1, at 3.2–4.9 s where timed. So a shared session misses Codex's cache sometimes too, though less often than
+heads on their own session (0 in 3 of 7).
 
 The Codex rows are why the agent runs on the `websocket` transport and shares its session with the heads. An
 earlier spike with a 13–22K prefix and a tool call over two turns measured the same pattern at larger size:
@@ -153,6 +155,8 @@ node scripts/live-check.mjs anthropic   # or codex
 
 It asks for 1847 × 2963 and prints the reply, each check and its cache numbers. Passing means
 `"correct": true` with one `pi-hydra` signal, unless the model noticed the wrong tool result on its own.
+Heads are models and can miss: in 1 of the 11 Codex runs above, the head returned no finding on the wrong
+answer.
 
 ## Development
 

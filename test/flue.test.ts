@@ -217,6 +217,25 @@ describe("pi-hydra heads in Flue", () => {
 		expect(result.records[0]).toMatchObject({ outcome: "none" });
 	});
 
+	it("an agent without heads is left alone: nothing recorded, its Codex transport unchanged", async () => {
+		const records: HydraRecord[] = [];
+		const model = scripted("openai-codex-responses", () => fauxAssistantMessage("391"), () => findings());
+		hydra = createFlueHydra();
+		const h = hydra;
+		const heads = [headFile("checker")];
+		function Reviewed() { useModel("test/m"); h.useHydra(heads, { onRecord: (r) => records.push(r) }); return "x"; }
+		function Plain() { useModel("test/m"); return "x"; }
+		runtime = await start({ agents: [{ agent: Reviewed, name: "reviewed" }, { agent: Plain, name: "plain" }], providers: [h.wrap(model.provider)] });
+		for (const Agent of [Plain, Reviewed]) {
+			const handle = init(Agent);
+			await handle.read(await handle.dispatch("go"));
+		}
+		const [plain, reviewed] = model.sent.filter((s) => !isHeadRequest(s));
+		expect(plain.options?.transport).toBe("auto"); // Flue's default, untouched
+		expect(reviewed.options?.transport).toBe("websocket");
+		expect(records.map((r) => r.outcome)).toEqual(["none"]);
+	});
+
 	it("an unsupported provider API is reported, not silently skipped", async () => {
 		const result = await run({ api: "test-api", driver: () => fauxAssistantMessage("391"), head: () => findings() });
 		expect(result.records[0]).toMatchObject({ outcome: "failed", errorKind: "unsupported-api" });

@@ -12,7 +12,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
-import { instrument, useAgentFinish } from "@flue/runtime";
+import { instrument, useAgentFinish, useAgentStart } from "@flue/runtime";
 import type { AgentFinishContext, FlueInstrumentation } from "@flue/runtime";
 import type { AssistantMessage, Message, Model, Provider, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { cleanupSessionResources } from "@earendil-works/pi-ai";
@@ -159,6 +159,8 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 	// Purpose of each model turn, reported before its provider call: only `agent` turns are the
 	// conversation itself (compaction calls share its harness and session).
 	const purposes = new Map<string, string>();
+	// Conversations whose agent called useHydra(), entered when a response starts (before its first
+	// model call): only their requests are recorded, and only their Codex transport is changed.
 	const conversations = new Map<string, Conversation>();
 	// Codex sessions whose sockets Hydra kept open by choosing the WebSocket transport; close()
 	// releases them so the process can exit.
@@ -209,11 +211,11 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 	function wrap(provider: Provider): Provider {
 		const record = (model: Model<any>, options: SimpleStreamOptions | undefined): SimpleStreamOptions | undefined => {
 			const current = scope.getStore();
-			if (!isMainConversation(current)) return options;
+			if (!isMainConversation(current) || !conversations.has(current.conversationId)) return options;
 			const purpose = purposes.get(current.turnId);
 			purposes.delete(current.turnId);
 			if (purpose !== "agent") return options;
-			const state = conversation(current.conversationId);
+			const state = conversations.get(current.conversationId)!;
 			const codex = model.api === "openai-codex-responses";
 			// Flue leaves the transport to pi-agent-core, whose default is `auto`; for Codex run the driver on
 			// a full-input transport instead, so heads can share its session.
@@ -342,6 +344,10 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 		wrap,
 		useHydra: (paths: string[], { onRecord }: UseHydraOptions = {}) => {
 			const heads = loadHeads(paths);
+			useAgentStart(() => {
+				const id = scope.getStore()?.conversationId;
+				if (id) conversation(id);
+			});
 			useAgentFinish((ctx) => review(ctx, heads, onRecord));
 		},
 		close: async () => {
