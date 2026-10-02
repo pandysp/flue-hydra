@@ -98,14 +98,25 @@ describe("pi-hydra heads in Flue", () => {
 		expect(text(driver2)).toContain("391");
 	});
 
-	it("a print finding is logged for people and never reaches the agent", async () => {
+	it.each([
+		["anthropic-messages", false], ["anthropic-messages", true],
+		["openai-codex-responses", false], ["openai-codex-responses", true],
+	] as const)("%s rejects deprecated head print (mixed: %s)", async (api, mixed) => {
 		const result = await run({
+			api,
 			driver: () => fauxAssistantMessage("391"),
-			head: () => findings({ action: "print", message: "looks fine, by the way" }),
+			head: () => findings(
+				{ action: "print", message: "PRIVATE PRINT" },
+				...(mixed ? [{ action: "steer", message: "PRIVATE STEER" }] : []),
+			),
 		});
 		expect(result.records).toHaveLength(1);
-		expect(result.logs).toContainEqual({ level: "info", message: "[pi-hydra checker] looks fine, by the way" });
-		expect(result.sent.filter((s) => !isHeadRequest(s))).toHaveLength(1);
+		expect(result.records[0]).toMatchObject({ outcome: "failed", errorKind: "malformed-findings", findings: [] });
+		expect(result.hydraMetadata).toEqual([{ reviewed: false, final: "391" }]);
+		expect(result.logs.some(log => log.level === "warn" && log.message.includes("check failed"))).toBe(true);
+		expect(result.logs.some(log => log.message.includes("PRIVATE PRINT"))).toBe(false);
+		expect(result.sent.filter(s => !isHeadRequest(s))).toHaveLength(1);
+		expect(text(result.sent.find(isHeadRequest)!)).not.toContain("print");
 	});
 
 	it("a failed check is logged as a warning and recorded; the response settles", async () => {

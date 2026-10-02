@@ -5,7 +5,7 @@
  * provider request is replayed byte for byte (a cache read) with the agent's final turn and the
  * head's instruction appended, exactly as pi-hydra does in pi. Findings the agent must act on are
  * appended to the response as one `pi-hydra` signal, so the agent continues and corrects before
- * the response settles; notes for people are written to the conversation log.
+ * the response settles.
  *
  * Wiring: `createFlueHydra()` once, `hydra.wrap(provider)` for the agent's model provider, and
  * `hydra.useHydra(heads)` inside the agent function. The answer the heads left standing is in the
@@ -35,9 +35,9 @@ import {
 } from "pi-hydra/utils.ts";
 import type { Decision, HeadDefinition, ObservationUsage } from "pi-hydra/utils.ts";
 
-/** What print and steer do here; heads are told this instead of pi's behaviour. */
+/** What steer does here; heads are told this instead of pi's behaviour. */
 export const FLUE_DELIVERY_GUIDANCE =
-	'"print" writes a note to the conversation log for the people watching; the main assistant will not see it. Use "steer" when the main assistant needs the feedback: it reads it before its answer is final and keeps working.';
+	'Use "steer" when the main assistant needs the feedback: it reads it before its answer is final and keeps working.';
 
 /** Provider APIs whose request shape pi-hydra's merge functions handle. */
 const SUPPORTED_APIS = new Set(["anthropic-messages", "openai-codex-responses"]);
@@ -340,6 +340,7 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 				return "failed";
 			}
 			const records = await Promise.all(heads.map((head) => check(head, state, conversationId, ctx.signal)));
+			// Deprecated print handling is retained, but heads cannot select it.
 			const steering = (record: HydraRecord) => record.findings.some((decision) => decision.action !== "print");
 			const unresolved = state.rounds >= maxRounds && records.some(steering);
 			const steers: { head: string; decision: Decision }[] = [];
