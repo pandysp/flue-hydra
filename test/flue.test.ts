@@ -153,8 +153,9 @@ describe("pi-hydra heads in Flue", () => {
 		expect(result.records.map((r) => [r.round, r.outcome])).toEqual([[0, "findings"], [0, "findings"], [1, "none"]]);
 	});
 
-	it("after a terminating tool the head sees the real tool result", async () => {
+	it.each(["anthropic-messages", "openai-codex-responses"])("after a terminating tool the head sees the call and its real result (%s)", async (api) => {
 		const result = await run({
+			api,
 			agent: (h, heads, onRecord) => function Agent() {
 				useModel("test/m");
 				useTool(defineTool({ name: "submit", description: "Submit.", input: v.object({ answer: v.number() }), run: ({ data }) => ({ output: `stored ${data.answer}`, terminate: true }) }));
@@ -166,6 +167,7 @@ describe("pi-hydra heads in Flue", () => {
 		});
 		const head = result.sent.find(isHeadRequest)!;
 		expect(text(head)).toContain("stored 401");
+		expect(text(head)).toMatch(/answer.{0,8}401/); // the call's arguments, not only its result
 		expect(text(head)).not.toContain("No result provided");
 	});
 
