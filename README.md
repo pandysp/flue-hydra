@@ -48,14 +48,14 @@ Three pieces work together:
 
 - `hydra.wrap(provider)` records each request the agent sends. Use the wrapped provider in
   `start({ providers })` or `setProvider()`.
-- `hydra.useHydra(heads)` inside the agent function names the head files that review this agent and runs
-  them when a response is about to settle. Different agents can use different heads.
+- `hydra.useHydra(heads, { onRecord })` inside the agent function names the head files that review this
+  agent and runs them when a response is about to settle. Different agents can use different heads.
+  `onRecord` (optional) is called once per head check with the conversation, head, round, outcome,
+  findings, any error, the token usage and whether its findings stayed `unresolved`.
 - `createFlueHydra()` installs one Flue instrumentation, which tells Hydra which conversation
   each request belongs to. `close()` removes it.
 
-Options of `createFlueHydra()`: `maxRounds` (default 3, below) and `onRecord`, called once per head check
-with the conversation, head, round, outcome, findings, any error, the token usage and whether its findings
-stayed `unresolved`.
+`createFlueHydra()` takes one option, `maxRounds` (default 3, below).
 
 Two helpers let a host check its setup before running anything: `checkHeads(paths)` reads and validates
 head files the way `useHydra()` does (it throws on a missing, invalid or tool-using head), and

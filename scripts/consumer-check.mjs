@@ -35,8 +35,8 @@ import { useModel } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { createFlueHydra, type HydraRecord } from "@pandysp/flue-hydra";
 const records: HydraRecord[] = [];
-const hydra = createFlueHydra({ maxRounds: 2, onRecord: (record) => records.push(record) });
-function Agent() { useModel("anthropic/claude-opus-5-5"); hydra.useHydra(["head.md"]); return "x"; }
+const hydra = createFlueHydra({ maxRounds: 2 });
+function Agent() { useModel("anthropic/claude-opus-5-5"); hydra.useHydra(["head.md"], { onRecord: (record) => records.push(record) }); return "x"; }
 export const boot = () => start({ agents: [Agent], providers: [hydra.wrap(anthropicProvider())] });
 // Each line below must be a type error. If a type had silently become \`any\`, the directive itself would fail.
 // @ts-expect-error a finding is a Decision, not a string

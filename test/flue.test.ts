@@ -56,15 +56,16 @@ afterEach(async () => {
 	runtime = hydra = undefined;
 });
 
-async function run(options: { api?: string; heads?: string[]; maxRounds?: number; agent?: (hydra: FlueHydra, heads: string[]) => () => string; driver: Parameters<typeof scripted>[1]; head: Parameters<typeof scripted>[2]; messages?: string[]; tolerateFailures?: boolean }) {
+async function run(options: { api?: string; heads?: string[]; maxRounds?: number; agent?: (hydra: FlueHydra, heads: string[], onRecord: (record: HydraRecord) => void) => () => string; driver: Parameters<typeof scripted>[1]; head: Parameters<typeof scripted>[2]; messages?: string[]; tolerateFailures?: boolean }) {
 	const records: HydraRecord[] = [];
 	const logs: { level: string; message: string }[] = [];
 	const unobserve = observe((event) => { if (event.type === "log") logs.push({ level: event.level, message: event.message }); });
 	const model = scripted(options.api ?? "anthropic-messages", options.driver, options.head);
-	hydra = createFlueHydra({ maxRounds: options.maxRounds, onRecord: (record) => records.push(record) });
+	hydra = createFlueHydra({ maxRounds: options.maxRounds });
 	const h = hydra;
 	const heads = options.heads ?? [headFile("checker")];
-	const Agent = options.agent?.(h, heads) ?? function Agent() { useModel("test/m"); h.useHydra(heads); return "You answer questions."; };
+	const onRecord = (record: HydraRecord) => records.push(record);
+	const Agent = options.agent?.(h, heads, onRecord) ?? function Agent() { useModel("test/m"); h.useHydra(heads, { onRecord }); return "You answer questions."; };
 	runtime = await start({ agents: [{ agent: Agent, name: "agent" }], providers: [h.wrap(model.provider)] });
 	const handle = init(Agent);
 	const replies: any[] = [];
@@ -150,10 +151,10 @@ describe("pi-hydra heads in Flue", () => {
 
 	it("after a terminating tool the head sees the real tool result", async () => {
 		const result = await run({
-			agent: (h, heads) => function Agent() {
+			agent: (h, heads, onRecord) => function Agent() {
 				useModel("test/m");
 				useTool(defineTool({ name: "submit", description: "Submit.", input: v.object({ answer: v.number() }), run: ({ data }) => ({ output: `stored ${data.answer}`, terminate: true }) }));
-				h.useHydra(heads);
+				h.useHydra(heads, { onRecord });
 				return "Submit the answer.";
 			},
 			driver: () => fauxAssistantMessage(fauxToolCall("submit", { answer: 401 }), { stopReason: "toolUse" }),
@@ -166,7 +167,7 @@ describe("pi-hydra heads in Flue", () => {
 
 	it("subagent calls are not reviewed as the conversation; the head replays the agent's own last request", async () => {
 		const result = await run({
-			agent: (h, heads) => function Agent() { useModel("test/m"); useSubagent(GeneralSubagent); h.useHydra(heads); return "Delegate, then answer."; },
+			agent: (h, heads, onRecord) => function Agent() { useModel("test/m"); useSubagent(GeneralSubagent); h.useHydra(heads, { onRecord }); return "Delegate, then answer."; },
 			driver: (sent) => text(sent).includes("sub task please")
 				? fauxAssistantMessage("sub result")
 				: text(sent).includes("sub result")
@@ -184,7 +185,7 @@ describe("pi-hydra heads in Flue", () => {
 		// Flue compacts right after a run's final turn once the threshold is crossed, before the
 		// finish hook: the summarization request is then the last provider call the head could see.
 		const result = await run({
-			agent: (h, heads) => function Agent() { useModel("test/m", { compaction: { reserveTokens: 1000, keepRecentTokens: 20 } }); h.useHydra(heads); return "Answer briefly."; },
+			agent: (h, heads, onRecord) => function Agent() { useModel("test/m", { compaction: { reserveTokens: 1000, keepRecentTokens: 20 } }); h.useHydra(heads, { onRecord }); return "Answer briefly."; },
 			driver: (sent) => {
 				const summarizing = text(sent).includes("context summarization assistant");
 				const message = fauxAssistantMessage(summarizing ? "## Summary\nearlier work" : "noted " + "x".repeat(20));
@@ -225,10 +226,10 @@ describe("pi-hydra heads in Flue", () => {
 	it("an agent whose provider is not wrapped reports that heads could not run", async () => {
 		const records: HydraRecord[] = [];
 		const model = scripted("anthropic-messages", () => fauxAssistantMessage("391"), () => findings());
-		hydra = createFlueHydra({ onRecord: (record) => records.push(record) });
+		hydra = createFlueHydra();
 		const h = hydra;
 		const heads = [headFile("checker")];
-		function Agent() { useModel("test/m"); h.useHydra(heads); return "x"; }
+		function Agent() { useModel("test/m"); h.useHydra(heads, { onRecord: (record) => records.push(record) }); return "x"; }
 		runtime = await start({ agents: [{ agent: Agent, name: "agent" }], providers: [model.provider] });
 		const handle = init(Agent);
 		await handle.read(await handle.dispatch("hi"));
@@ -250,16 +251,17 @@ describe("pi-hydra heads in Flue", () => {
 	it("each agent is reviewed by its own heads", async () => {
 		const records: HydraRecord[] = [];
 		const model = scripted("anthropic-messages", () => fauxAssistantMessage("391"), () => findings());
-		hydra = createFlueHydra({ onRecord: (record) => records.push(record) });
+		hydra = createFlueHydra();
 		const h = hydra;
 		const [math, style] = [[headFile("math")], [headFile("style"), headFile("tone")]];
-		function Math() { useModel("test/m"); h.useHydra(math); return "Multiply."; }
-		function Writer() { useModel("test/m"); h.useHydra(style); return "Write."; }
+		const seen: string[] = [];
+		function Math() { useModel("test/m"); h.useHydra(math, { onRecord: (r) => { records.push(r); seen.push(`math:${r.head}`); } }); return "Multiply."; }
+		function Writer() { useModel("test/m"); h.useHydra(style, { onRecord: (r) => { records.push(r); seen.push(`writer:${r.head}`); } }); return "Write."; }
 		runtime = await start({ agents: [{ agent: Math, name: "math" }, { agent: Writer, name: "writer" }], providers: [h.wrap(model.provider)] });
 		for (const Agent of [Math, Writer]) {
 			const handle = init(Agent);
 			await handle.read(await handle.dispatch("go"));
 		}
-		expect(records.map((r) => r.head)).toEqual(["math", "style", "tone"]);
+		expect(seen).toEqual(["math:math", "writer:style", "writer:tone"]);
 	});
 });

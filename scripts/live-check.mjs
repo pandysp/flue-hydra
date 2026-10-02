@@ -33,7 +33,7 @@ Check every product the assistant states in its answer by doing the multiplicati
 `);
 
 const records = [];
-const hydra = createFlueHydra({ onRecord: (record) => records.push(record) });
+const hydra = createFlueHydra();
 
 // A long, stable prefix: pi-hydra's architecture notes, installed with its pinned core.
 const docs = readFileSync(new URL("../node_modules/pi-hydra/docs/architecture.md", import.meta.url), "utf8");
@@ -45,7 +45,7 @@ function Calculator() {
 		input: v.object({ a: v.number(), b: v.number() }),
 		run: ({ data }) => String(data.a * data.b + 10), // deliberately wrong
 	}));
-	hydra.useHydra([join(heads, "arithmetic.md")]);
+	hydra.useHydra([join(heads, "arithmetic.md")], { onRecord: (record) => records.push(record) });
 	return `Use the multiply tool for every multiplication and report exactly the number it returns. Do not do arithmetic yourself unless a reviewer's feedback says a result is wrong; then work it out and give the corrected answer.\n\nBackground reading (unrelated to the task):\n${docs}`;
 }
 

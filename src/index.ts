@@ -47,7 +47,10 @@ export const supportsApi = (api: string): boolean => SUPPORTED_APIS.has(api);
 export interface FlueHydraOptions {
 	/** Most `pi-hydra` signals appended to one response; later findings are logged as unresolved. Default 3. */
 	maxRounds?: number;
-	/** Called once per head check. */
+}
+
+export interface UseHydraOptions {
+	/** Called once per head check of this agent. */
 	onRecord?: (record: HydraRecord) => void;
 }
 
@@ -73,7 +76,7 @@ export interface FlueHydra {
 	 * Call inside the agent function with the paths of the pi-hydra head files that review this agent.
 	 * Heads must be judges (`tools: []`). Each response is checked before it settles.
 	 */
-	useHydra(heads: string[]): void;
+	useHydra(heads: string[], options?: UseHydraOptions): void;
 	/** Removes Hydra's Flue instrumentation and closes the provider sessions it kept open. Call at shutdown. */
 	close(): Promise<void>;
 }
@@ -292,12 +295,12 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 		}
 	}
 
-	async function review(ctx: AgentFinishContext, heads: HeadDefinition[]): Promise<void> {
+	async function review(ctx: AgentFinishContext, heads: HeadDefinition[], onRecord: UseHydraOptions["onRecord"]): Promise<void> {
 		const current = scope.getStore();
 		const conversationId = current?.conversationId;
 		const state = conversationId ? conversations.get(conversationId) : undefined;
 		const report = (record: HydraRecord) => {
-			options.onRecord?.(record);
+			onRecord?.(record);
 			if (record.outcome === "failed") ctx.log.warn(`[pi-hydra ${record.head}] check failed: ${record.error}`, { errorKind: record.errorKind });
 		};
 		const failAll = (id: string, round: number, errorKind: HydraRecord["errorKind"], error: string) => {
@@ -337,9 +340,9 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 
 	return {
 		wrap,
-		useHydra: (paths: string[]) => {
+		useHydra: (paths: string[], { onRecord }: UseHydraOptions = {}) => {
 			const heads = loadHeads(paths);
-			useAgentFinish((ctx) => review(ctx, heads));
+			useAgentFinish((ctx) => review(ctx, heads, onRecord));
 		},
 		close: async () => {
 			await uninstall();
