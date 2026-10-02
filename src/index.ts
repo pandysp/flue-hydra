@@ -35,9 +35,9 @@ import {
 } from "pi-hydra/utils.ts";
 import type { Decision, HeadDefinition, ObservationUsage } from "pi-hydra/utils.ts";
 
-/** What print, steer and interrupt do here; heads are told this instead of pi's behaviour. */
+/** What print and steer do here; heads are told this instead of pi's behaviour. */
 export const FLUE_DELIVERY_GUIDANCE =
-	'"print" writes a note to the conversation log for the people watching; the main assistant will not see it. Use "steer" when the main assistant needs the feedback: it reads it before its answer is final and keeps working. "interrupt" is delivered the same way as "steer" here.';
+	'"print" writes a note to the conversation log for the people watching; the main assistant will not see it. Use "steer" when the main assistant needs the feedback: it reads it before its answer is final and keeps working.';
 
 /** Provider APIs whose request shape pi-hydra's merge functions handle. */
 const SUPPORTED_APIS = new Set(["anthropic-messages", "openai-codex-responses"]);
@@ -83,7 +83,7 @@ export interface HydraRecord {
 	error: string | null;
 	usage: ObservationUsage | null;
 	durationMs: number;
-	/** The head's steer/interrupt findings were not delivered: the response had used up `maxRounds`. */
+	/** The head's steer findings were not delivered: the response had used up `maxRounds`. */
 	unresolved: boolean;
 }
 

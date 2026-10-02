@@ -108,15 +108,6 @@ describe("pi-hydra heads in Flue", () => {
 		expect(result.sent.filter((s) => !isHeadRequest(s))).toHaveLength(1);
 	});
 
-	it("interrupt is delivered like steer", async () => {
-		const result = await run({
-			driver: (_sent, i) => fauxAssistantMessage(i === 0 ? "401" : "391"),
-			head: (_sent, i) => (i === 0 ? findings({ action: "interrupt", message: "wrong product" }) : findings()),
-		});
-		expect(result.replies[0].text).toMatch(/391$/);
-		expect(text(result.sent.filter((s) => !isHeadRequest(s))[1])).toContain("[pi-hydra checker] wrong product");
-	});
-
 	it("a failed check is logged as a warning and recorded; the response settles", async () => {
 		const result = await run({ driver: () => fauxAssistantMessage("391"), head: () => "not json" });
 		expect(result.replies[0].text).toBe("391");
