@@ -81,11 +81,12 @@ is created.
 | Finding | In Flue |
 |---|---|
 | `steer` | Added to the response as one `pi-hydra` signal; the agent reads it and keeps working |
-| `print` | Written to the conversation log for the people watching; the agent never sees it |
+| `print` (deprecated, internal only) | Written to the conversation log for the people watching; the agent never sees it |
 | none | The response settles |
 
-Heads are told this, instead of pi's behaviour. After the agent's next turn the heads check
-again. After `maxRounds` rounds of feedback in one response, further findings are logged as
+Heads can only choose `steer` or report no findings. They are told how `steer` works here,
+instead of pi's behaviour. The deprecated print code remains, but print answers from heads
+are rejected. After the agent's next turn the heads check again. After `maxRounds` rounds of feedback in one response, further findings are logged as
 warnings marked unresolved and the response settles, rather than running Flue into its own limit
 of 32 continuations, which fails the response. Rounds, and what heads have already sent, are
 counted per response: the next response starts fresh.
