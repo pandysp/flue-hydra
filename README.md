@@ -128,9 +128,14 @@ run-end check: the agent's last request, its last turn and the head prompt.
 
 | Provider | First check of a response | Check after a correction |
 |---|---|---|
-| Anthropic, Opus 5.5 | 5,974–6,091 of about 6,760–7,000 input tokens read from cache in 11/11 runs; the rest is the final turn written to cache plus 4 new tokens; $0.006–$0.011 per check where recorded, 2.5–10.1 s, once 58.7 s | 6,209–6,382 of about 7,200–7,280 read (5 runs) |
+| Anthropic, Opus 5.5 | 5,974–6,053 of about 6,760–7,000 input tokens read from cache in 7/7 runs; the rest is the final turn written to cache plus 4 new tokens; $0.006–$0.011 per check where recorded, 2.5–7.1 s | 6,209 and 6,382 of about 7,200–7,280 read (2 runs) |
 | Codex, GPT-5.5, heads on the agent's session | 3,584 of 3,922–3,964 read in 10/14 runs, 2,560 in 4/14, never 0; 2.0–5.6 s | 2,560 of about 4,030–4,075 read in 14/14 runs |
 | Codex, heads on their own session | 3,584 read in 4/7 runs, 0 in 3/7 | 2,560 read in 7/7 runs |
+
+On October 2, on the final code (heads in `useHydra(heads)`), 4 Anthropic runs read 6,091–6,132 of
+6,800–6,924 on the first check and 6,234–6,294 of 7,251–7,317 after a correction (3 runs), at 3.4–10.1 s
+per check with one at 58.7 s; 3 Codex runs read 2,560 of 3,991–4,021 and then 2,560 of 4,084–4,114, at
+1.8–4.6 s.
 
 The Codex rows are why the agent runs on the `websocket` transport and shares its session with the heads. An
 earlier spike with a 13–22K prefix and a tool call over two turns measured the same pattern at larger size:
