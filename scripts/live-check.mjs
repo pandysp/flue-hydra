@@ -33,7 +33,7 @@ Check every product the assistant states in its answer by doing the multiplicati
 `);
 
 const records = [];
-const hydra = createFlueHydra({ heads: [join(heads, "arithmetic.md")], onRecord: (record) => records.push(record) });
+const hydra = createFlueHydra({ onRecord: (record) => records.push(record) });
 
 const docs = readFileSync(new URL("../docs/architecture.md", import.meta.url), "utf8"); // a long, stable prefix
 function Calculator() {
@@ -44,7 +44,7 @@ function Calculator() {
 		input: v.object({ a: v.number(), b: v.number() }),
 		run: ({ data }) => String(data.a * data.b + 10), // deliberately wrong
 	}));
-	hydra.useHydra();
+	hydra.useHydra([join(heads, "arithmetic.md")]);
 	return `Use the multiply tool for every multiplication and report exactly the number it returns. Do not do arithmetic yourself unless a reviewer's feedback says a result is wrong; then work it out and give the corrected answer.\n\nBackground reading (unrelated to the task):\n${docs}`;
 }
 

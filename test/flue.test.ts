@@ -9,7 +9,7 @@ import * as v from "valibot";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { defineTool, GeneralSubagent, init, observe, useModel, useSubagent, useTool } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
-import { createFlueHydra, type FlueHydra, type HydraRecord } from "../src/index.ts";
+import { checkHeads, createFlueHydra, supportsApi, type FlueHydra, type HydraRecord } from "../src/index.ts";
 
 type Sent = { messages: { role: string; content: { type: string; text: string }[] }[]; options?: { sessionId?: string; transport?: string } };
 const text = (sent: Sent) => JSON.stringify(sent.messages);
@@ -56,14 +56,15 @@ afterEach(async () => {
 	runtime = hydra = undefined;
 });
 
-async function run(options: { api?: string; heads?: string[]; maxRounds?: number; agent?: (hydra: FlueHydra) => () => string; driver: Parameters<typeof scripted>[1]; head: Parameters<typeof scripted>[2]; messages?: string[]; tolerateFailures?: boolean }) {
+async function run(options: { api?: string; heads?: string[]; maxRounds?: number; agent?: (hydra: FlueHydra, heads: string[]) => () => string; driver: Parameters<typeof scripted>[1]; head: Parameters<typeof scripted>[2]; messages?: string[]; tolerateFailures?: boolean }) {
 	const records: HydraRecord[] = [];
 	const logs: { level: string; message: string }[] = [];
 	const unobserve = observe((event) => { if (event.type === "log") logs.push({ level: event.level, message: event.message }); });
 	const model = scripted(options.api ?? "anthropic-messages", options.driver, options.head);
-	hydra = createFlueHydra({ heads: options.heads ?? [headFile("checker")], maxRounds: options.maxRounds, onRecord: (record) => records.push(record) });
+	hydra = createFlueHydra({ maxRounds: options.maxRounds, onRecord: (record) => records.push(record) });
 	const h = hydra;
-	const Agent = options.agent?.(h) ?? function Agent() { useModel("test/m"); h.useHydra(); return "You answer questions."; };
+	const heads = options.heads ?? [headFile("checker")];
+	const Agent = options.agent?.(h, heads) ?? function Agent() { useModel("test/m"); h.useHydra(heads); return "You answer questions."; };
 	runtime = await start({ agents: [{ agent: Agent, name: "agent" }], providers: [h.wrap(model.provider)] });
 	const handle = init(Agent);
 	const replies: any[] = [];
@@ -125,7 +126,7 @@ describe("pi-hydra heads in Flue", () => {
 			head: () => findings({ action: "steer", message: "still wrong" }),
 		});
 		expect(result.replies[0].text).toMatch(/attempt 2$/);
-		expect(result.records.map((r) => r.round)).toEqual([0, 1, 2]);
+		expect(result.records.map((r) => [r.round, r.unresolved])).toEqual([[0, false], [1, false], [2, true]]);
 		expect(result.logs.some((log) => log.level === "warn" && log.message.includes("unresolved after 2 rounds"))).toBe(true);
 	});
 
@@ -149,10 +150,10 @@ describe("pi-hydra heads in Flue", () => {
 
 	it("after a terminating tool the head sees the real tool result", async () => {
 		const result = await run({
-			agent: (h) => function Agent() {
+			agent: (h, heads) => function Agent() {
 				useModel("test/m");
 				useTool(defineTool({ name: "submit", description: "Submit.", input: v.object({ answer: v.number() }), run: ({ data }) => ({ output: `stored ${data.answer}`, terminate: true }) }));
-				h.useHydra();
+				h.useHydra(heads);
 				return "Submit the answer.";
 			},
 			driver: () => fauxAssistantMessage(fauxToolCall("submit", { answer: 401 }), { stopReason: "toolUse" }),
@@ -165,7 +166,7 @@ describe("pi-hydra heads in Flue", () => {
 
 	it("subagent calls are not reviewed as the conversation; the head replays the agent's own last request", async () => {
 		const result = await run({
-			agent: (h) => function Agent() { useModel("test/m"); useSubagent(GeneralSubagent); h.useHydra(); return "Delegate, then answer."; },
+			agent: (h, heads) => function Agent() { useModel("test/m"); useSubagent(GeneralSubagent); h.useHydra(heads); return "Delegate, then answer."; },
 			driver: (sent) => text(sent).includes("sub task please")
 				? fauxAssistantMessage("sub result")
 				: text(sent).includes("sub result")
@@ -183,7 +184,7 @@ describe("pi-hydra heads in Flue", () => {
 		// Flue compacts right after a run's final turn once the threshold is crossed, before the
 		// finish hook: the summarization request is then the last provider call the head could see.
 		const result = await run({
-			agent: (h) => function Agent() { useModel("test/m", { compaction: { reserveTokens: 1000, keepRecentTokens: 20 } }); h.useHydra(); return "Answer briefly."; },
+			agent: (h, heads) => function Agent() { useModel("test/m", { compaction: { reserveTokens: 1000, keepRecentTokens: 20 } }); h.useHydra(heads); return "Answer briefly."; },
 			driver: (sent) => {
 				const summarizing = text(sent).includes("context summarization assistant");
 				const message = fauxAssistantMessage(summarizing ? "## Summary\nearlier work" : "noted " + "x".repeat(20));
@@ -224,18 +225,41 @@ describe("pi-hydra heads in Flue", () => {
 	it("an agent whose provider is not wrapped reports that heads could not run", async () => {
 		const records: HydraRecord[] = [];
 		const model = scripted("anthropic-messages", () => fauxAssistantMessage("391"), () => findings());
-		hydra = createFlueHydra({ heads: [headFile("checker")], onRecord: (record) => records.push(record) });
+		hydra = createFlueHydra({ onRecord: (record) => records.push(record) });
 		const h = hydra;
-		function Agent() { useModel("test/m"); h.useHydra(); return "x"; }
+		const heads = [headFile("checker")];
+		function Agent() { useModel("test/m"); h.useHydra(heads); return "x"; }
 		runtime = await start({ agents: [{ agent: Agent, name: "agent" }], providers: [model.provider] });
 		const handle = init(Agent);
 		await handle.read(await handle.dispatch("hi"));
 		expect(records[0]).toMatchObject({ outcome: "failed", errorKind: "no-capture" });
 	});
 
-	it("heads that use tools or are invalid are refused at creation", () => {
-		expect(() => createFlueHydra({ heads: [headFile("actor", "tools: read")] })).toThrow(/judge heads only/);
-		expect(() => createFlueHydra({ heads: [headFile("open", "description2: x")] })).toThrow(/invalid head file/);
-		expect(() => createFlueHydra({ heads: [] })).toThrow(/no heads/);
+	it("heads that use tools, are invalid or missing are refused", () => {
+		expect(() => checkHeads([headFile("actor", "tools: read")])).toThrow(/judge heads only/);
+		expect(() => checkHeads([headFile("open", "description2: x")])).toThrow(/invalid head file/);
+		expect(() => checkHeads([join(tmpdir(), "no-such-head.md")])).toThrow(/ENOENT/);
+		expect(() => checkHeads([])).toThrow(/no heads/);
+		expect(checkHeads([headFile("checker")])).toEqual(["checker"]);
+	});
+
+	it("supportsApi names the provider APIs heads can review", () => {
+		expect([supportsApi("anthropic-messages"), supportsApi("openai-codex-responses"), supportsApi("openai-responses")]).toEqual([true, true, false]);
+	});
+
+	it("each agent is reviewed by its own heads", async () => {
+		const records: HydraRecord[] = [];
+		const model = scripted("anthropic-messages", () => fauxAssistantMessage("391"), () => findings());
+		hydra = createFlueHydra({ onRecord: (record) => records.push(record) });
+		const h = hydra;
+		const [math, style] = [[headFile("math")], [headFile("style"), headFile("tone")]];
+		function Math() { useModel("test/m"); h.useHydra(math); return "Multiply."; }
+		function Writer() { useModel("test/m"); h.useHydra(style); return "Write."; }
+		runtime = await start({ agents: [{ agent: Math, name: "math" }, { agent: Writer, name: "writer" }], providers: [h.wrap(model.provider)] });
+		for (const Agent of [Math, Writer]) {
+			const handle = init(Agent);
+			await handle.read(await handle.dispatch("go"));
+		}
+		expect(records.map((r) => r.head)).toEqual(["math", "style", "tone"]);
 	});
 });

@@ -41,9 +41,10 @@ export const FLUE_DELIVERY_GUIDANCE =
 /** Provider APIs whose request shape pi-hydra's merge functions handle. */
 const SUPPORTED_APIS = new Set(["anthropic-messages", "openai-codex-responses"]);
 
+/** Whether heads can review an agent whose model uses this provider API (`model.api`). */
+export const supportsApi = (api: string): boolean => SUPPORTED_APIS.has(api);
+
 export interface FlueHydraOptions {
-	/** Paths to pi-hydra head files. Heads must be judges (`tools: []`). */
-	heads: string[];
 	/** Most `pi-hydra` signals appended to one response; later findings are logged as unresolved. Default 3. */
 	maxRounds?: number;
 	/** Called once per head check. */
@@ -61,13 +62,18 @@ export interface HydraRecord {
 	error: string | null;
 	usage: ObservationUsage | null;
 	durationMs: number;
+	/** The head's steer/interrupt findings were not delivered: the response had used up `maxRounds`. */
+	unresolved: boolean;
 }
 
 export interface FlueHydra {
 	/** The same provider, recording each main-conversation request so heads can replay it. */
 	wrap(provider: Provider): Provider;
-	/** Call inside the agent function: reviews each response before it settles. */
-	useHydra(): void;
+	/**
+	 * Call inside the agent function with the paths of the pi-hydra head files that review this agent.
+	 * Heads must be judges (`tools: []`). Each response is checked before it settles.
+	 */
+	useHydra(heads: string[]): void;
 	/** Removes Hydra's Flue instrumentation and closes the provider sessions it kept open. Call at shutdown. */
 	close(): Promise<void>;
 }
@@ -114,6 +120,14 @@ function loadHead(path: string): HeadDefinition {
 	return parsed.head;
 }
 
+function loadHeads(paths: string[]): HeadDefinition[] {
+	if (paths.length === 0) throw new Error("pi-hydra: no heads given.");
+	return paths.map(loadHead);
+}
+
+/** Reads and validates head files the way `useHydra()` does; throws on a missing, invalid or tool-using head. Returns their names. */
+export const checkHeads = (paths: string[]): string[] => loadHeads(paths).map((head) => head.name);
+
 // A model call of an agent's own conversation. Subagent tasks and harness scratch prompts run in
 // conversations of their own, which no head reviews; skipping them keeps Hydra from holding a copy
 // of each of their requests. Compaction shares the conversation and is excluded by turn purpose.
@@ -136,9 +150,7 @@ const usageOf = (usage: AssistantMessage["usage"]): ObservationUsage => ({
 const modelMessages = (messages: readonly { role: string }[]): Message[] =>
 	messages.filter((message): message is Message => ["user", "assistant", "toolResult"].includes(message.role));
 
-export function createFlueHydra(options: FlueHydraOptions): FlueHydra {
-	const heads = options.heads.map(loadHead);
-	if (heads.length === 0) throw new Error("pi-hydra: no heads given.");
+export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 	const maxRounds = options.maxRounds ?? 3;
 	const scope = new AsyncLocalStorage<Scope>();
 	// Purpose of each model turn, reported before its provider call: only `agent` turns are the
@@ -233,7 +245,7 @@ export function createFlueHydra(options: FlueHydraOptions): FlueHydra {
 		const startedAt = Date.now();
 		const result = (outcome: HydraRecord["outcome"], fields: Partial<HydraRecord>): HydraRecord => ({
 			conversationId, head: head.name, round: state.rounds, outcome, findings: [], errorKind: null, error: null, usage: null,
-			durationMs: Date.now() - startedAt, ...fields,
+			durationMs: Date.now() - startedAt, unresolved: false, ...fields,
 		});
 		const capture = state.capture!;
 		const api = capture.model.api as string;
@@ -280,7 +292,7 @@ export function createFlueHydra(options: FlueHydraOptions): FlueHydra {
 		}
 	}
 
-	async function review(ctx: AgentFinishContext): Promise<void> {
+	async function review(ctx: AgentFinishContext, heads: HeadDefinition[]): Promise<void> {
 		const current = scope.getStore();
 		const conversationId = current?.conversationId;
 		const state = conversationId ? conversations.get(conversationId) : undefined;
@@ -289,7 +301,7 @@ export function createFlueHydra(options: FlueHydraOptions): FlueHydra {
 			if (record.outcome === "failed") ctx.log.warn(`[pi-hydra ${record.head}] check failed: ${record.error}`, { errorKind: record.errorKind });
 		};
 		const failAll = (id: string, round: number, errorKind: HydraRecord["errorKind"], error: string) => {
-			for (const head of heads) report({ conversationId: id, head: head.name, round, outcome: "failed", findings: [], errorKind, error, usage: null, durationMs: 0 });
+			for (const head of heads) report({ conversationId: id, head: head.name, round, outcome: "failed", findings: [], errorKind, error, usage: null, durationMs: 0, unresolved: false });
 		};
 		if (!conversationId || !state?.capture) {
 			failAll(conversationId ?? "unknown", 0, "no-capture", "no recorded request for this response; is the agent's provider wrapped with hydra.wrap()?");
@@ -300,9 +312,11 @@ export function createFlueHydra(options: FlueHydraOptions): FlueHydra {
 			return;
 		}
 		const records = await Promise.all(heads.map((head) => check(head, state, conversationId, ctx.signal)));
+		const steering = (record: HydraRecord) => record.findings.some((decision) => decision.action !== "print");
+		const unresolved = state.rounds >= maxRounds && records.some(steering);
 		const steers: { head: string; decision: Decision }[] = [];
 		for (const record of records) {
-			report(record);
+			report({ ...record, unresolved: unresolved && steering(record) });
 			for (const decision of record.findings) {
 				if (decision.action === "print") {
 					ctx.log.info(`[pi-hydra ${record.head}] ${decision.message}`, { head: record.head, reason: decision.reason });
@@ -323,7 +337,10 @@ export function createFlueHydra(options: FlueHydraOptions): FlueHydra {
 
 	return {
 		wrap,
-		useHydra: () => useAgentFinish(review),
+		useHydra: (paths: string[]) => {
+			const heads = loadHeads(paths);
+			useAgentFinish((ctx) => review(ctx, heads));
+		},
 		close: async () => {
 			await uninstall();
 			for (const sessionId of sessions) cleanupSessionResources(sessionId);

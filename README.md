@@ -30,11 +30,11 @@ import { useModel } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { createFlueHydra } from "@pandysp/flue-hydra";
 
-const hydra = createFlueHydra({ heads: ["/path/to/heads/quality.md"] });
+const hydra = createFlueHydra();
 
 function Reviewer() {
 	useModel("anthropic/claude-opus-5-5");
-	hydra.useHydra(); // review each response before it settles
+	hydra.useHydra(["/path/to/heads/quality.md"]); // review each response before it settles
 	return "You review pull requests.";
 }
 
@@ -48,12 +48,18 @@ Three pieces work together:
 
 - `hydra.wrap(provider)` records each request the agent sends. Use the wrapped provider in
   `start({ providers })` or `setProvider()`.
-- `hydra.useHydra()` inside the agent function runs the heads when a response is about to settle.
+- `hydra.useHydra(heads)` inside the agent function names the head files that review this agent and runs
+  them when a response is about to settle. Different agents can use different heads.
 - `createFlueHydra()` installs one Flue instrumentation, which tells Hydra which conversation
   each request belongs to. `close()` removes it.
 
-Options: `heads` (head file paths), `maxRounds` (default 3, below) and `onRecord`, called once per
-head check with the conversation, head, round, outcome, findings, any error and the token usage.
+Options of `createFlueHydra()`: `maxRounds` (default 3, below) and `onRecord`, called once per head check
+with the conversation, head, round, outcome, findings, any error, the token usage and whether its findings
+stayed `unresolved`.
+
+Two helpers let a host check its setup before running anything: `checkHeads(paths)` reads and validates
+head files the way `useHydra()` does (it throws on a missing, invalid or tool-using head), and
+`supportsApi(model.api)` says whether heads can review a model's provider API.
 
 ## What a check sees
 

@@ -35,8 +35,8 @@ import { useModel } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { createFlueHydra, type HydraRecord } from "@pandysp/flue-hydra";
 const records: HydraRecord[] = [];
-const hydra = createFlueHydra({ heads: ["head.md"], maxRounds: 2, onRecord: (record) => records.push(record) });
-function Agent() { useModel("anthropic/claude-opus-5-5"); hydra.useHydra(); return "x"; }
+const hydra = createFlueHydra({ maxRounds: 2, onRecord: (record) => records.push(record) });
+function Agent() { useModel("anthropic/claude-opus-5-5"); hydra.useHydra(["head.md"]); return "x"; }
 export const boot = () => start({ agents: [Agent], providers: [hydra.wrap(anthropicProvider())] });
 // Each line below must be a type error. If a type had silently become \`any\`, the directive itself would fail.
 // @ts-expect-error a finding is a Decision, not a string
@@ -63,8 +63,8 @@ faux.setResponses([async function step(context, options, _state, model) {
 	if (JSON.stringify(sent).includes("reviewing the main assistant")) return fauxAssistantMessage(heads++ === 0 ? JSON.stringify({ findings: [{ action: "steer", reason: "r", message: "17 x 23 is 391" }] }) : '{"findings":[]}');
 	return fauxAssistantMessage(drivers++ === 0 ? "401" : "391");
 }]);
-const hydra = createFlueHydra({ heads: ["head.md"] });
-function Agent() { useModel("test/m"); hydra.useHydra(); return "Multiply."; }
+const hydra = createFlueHydra();
+function Agent() { useModel("test/m"); hydra.useHydra(["head.md"]); return "Multiply."; }
 const flue = await start({ agents: [Agent], providers: [hydra.wrap(faux.provider)] });
 const handle = init(Agent);
 const reply = await handle.read(await handle.dispatch("17 times 23?"));
