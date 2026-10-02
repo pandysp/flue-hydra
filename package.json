@@ -1,0 +1,37 @@
+{
+	"name": "@pandysp/flue-hydra",
+	"version": "0.1.0",
+	"description": "pi-hydra's review heads for Flue agents: each response is checked before it settles, from the provider's cache",
+	"keywords": ["flue", "pi-hydra", "agents", "review", "llm", "prompt-caching"],
+	"license": "MIT",
+	"author": "Andreas Spannagel",
+	"repository": { "type": "git", "url": "git+https://github.com/pandysp/flue-hydra.git" },
+	"homepage": "https://github.com/pandysp/flue-hydra#readme",
+	"type": "module",
+	"exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+	"files": ["dist"],
+	"engines": { "node": ">=22.19.0" },
+	"scripts": {
+		"build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@flue/* --external:@earendil-works/* --log-level=warning && rollup -c --silent",
+		"prepare": "npm run build",
+		"check": "tsc",
+		"test": "vitest run",
+		"consumer": "node scripts/consumer-check.mjs"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "0.87.x",
+		"@flue/runtime": ">=2.2.2 <3"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "0.87.1",
+		"@flue/runtime": "2.2.2",
+		"@types/node": "^22",
+		"esbuild": "^0.25",
+		"pi-hydra": "git+https://github.com/pandysp/pi-hydra.git#022f19ea432690e00039df1a6d93a4eb9dca1f60",
+		"rollup": "^4",
+		"rollup-plugin-dts": "^6",
+		"typescript": "^5.9",
+		"valibot": "^1.1.0",
+		"vitest": "^4.1.11"
+	}
+}
