@@ -81,7 +81,6 @@ is created.
 | Finding | In Flue |
 |---|---|
 | `steer` | Added to the response as one `pi-hydra` signal; the agent reads it and keeps working |
-| `interrupt` | The same as `steer`: Flue cannot stop a turn in progress without discarding it |
 | `print` | Written to the conversation log for the people watching; the agent never sees it |
 | none | The response settles |
 
