@@ -390,10 +390,13 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 			// Every resource gets its cleanup attempt; failures are reported together afterwards.
 			const errors: unknown[] = [];
 			try { await uninstall(); } catch (error) { errors.push(error); }
-			for (const sessionId of sessions) {
-				try { cleanupSessionResources(sessionId); } catch (error) { errors.push(error); }
+			// A session is forgotten only once released, so a later close() retries the ones that failed.
+			for (const sessionId of [...sessions]) {
+				try {
+					cleanupSessionResources(sessionId);
+					sessions.delete(sessionId);
+				} catch (error) { errors.push(error); }
 			}
-			sessions.clear();
 			if (errors.length) throw new AggregateError(errors, "pi-hydra: close() could not release everything");
 		},
 	};

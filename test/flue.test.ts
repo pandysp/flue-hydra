@@ -277,6 +277,37 @@ describe("pi-hydra heads in Flue", () => {
 		expect(cleaned).toEqual(ids);
 	});
 
+	it("a second close() retries only the sessions whose cleanup failed", async () => {
+		const model = scripted("openai-codex-responses", () => fauxAssistantMessage("answer"), () => findings());
+		const h = createFlueHydra();
+		hydra = h;
+		const heads = [headFile("checker")];
+		function Agent() { useModel("test/m"); h.useHydra(heads); return "Answer."; }
+		runtime = await start({ agents: [{ agent: Agent, name: "agent" }], providers: [h.wrap(model.provider)] });
+		for (let i = 0; i < 2; i++) {
+			const handle = init(Agent);
+			await handle.read(await handle.dispatch("go"));
+		}
+		const ids = [...new Set(model.sent.map((s) => s.options?.sessionId))];
+		await runtime.stop();
+		runtime = undefined;
+		const calls: string[] = [];
+		const open = new Set(ids);
+		let first = true;
+		const unregister = registerSessionResourceCleanup((id) => {
+			calls.push(id!);
+			if (id === ids[0] && first) { first = false; throw new Error("transient cleanup failure"); }
+			open.delete(id);
+		});
+		try {
+			await expect(h.close()).rejects.toThrow(AggregateError);
+			calls.length = 0;
+			await h.close();
+			expect(calls).toEqual([ids[0]]);
+			expect([...open]).toEqual([]);
+		} finally { unregister(); hydra = undefined; }
+	});
+
 	it("an unsupported provider API is reported, not silently skipped", async () => {
 		const result = await run({ api: "test-api", driver: () => fauxAssistantMessage("391"), head: () => findings() });
 		expect(result.records[0]).toMatchObject({ outcome: "failed", errorKind: "unsupported-api" });
