@@ -48,11 +48,10 @@ Three pieces work together:
 
 - `hydra.wrap(provider)` records the requests of agents that call `useHydra()`; other agents' requests
   pass through untouched. Use the wrapped provider in `start({ providers })` or `setProvider()`.
-- `hydra.useHydra(heads, { onRecord, onFinal })` inside the agent function names the head files that
-  review this agent and runs them when a response is about to settle. Different agents can use
-  different heads. `onRecord` (optional) is called once per head check with the conversation, head,
-  round, outcome, findings, any error, the token usage and whether its findings stayed `unresolved`.
-  `onFinal` (optional) receives the response's final answer ([below](#what-happens-to-findings)).
+- `hydra.useHydra(heads, { onRecord })` inside the agent function names the head files that review this
+  agent and runs them when a response is about to settle. Different agents can use different heads.
+  `onRecord` (optional) is called once per head check with the conversation, head, round, outcome,
+  findings, any error, the token usage and whether its findings stayed `unresolved`.
 - `createFlueHydra()` installs one Flue instrumentation, which tells Hydra which conversation
   each request belongs to. `close()` removes it.
 
@@ -96,9 +95,18 @@ A check that fails (provider error, malformed answer, unsupported provider) is l
 warning and recorded; the response settles unchanged.
 
 A corrected response keeps its earlier answers: Flue's reply text (`AgentReply.text`) joins the text
-of every step of the response, so it reads "first answer", blank line, "corrected answer". To get only
-the answer the heads left standing, pass `onFinal` to `useHydra()`; it is called once when the
-response settles, with the text of its final step.
+of every step of the response, so it reads "first answer", blank line, "corrected answer". Hydra adds
+the answer the heads left standing to the response's metadata, once the response has really ended
+(after every finish hook, including other hooks that kept it going):
+
+```ts
+const reply = await handle.read(receipt);
+const hydra = reply.metadata?.[HYDRA_METADATA_KEY]; // { reviewed: boolean, final: string }
+```
+
+`final` is the text of the response's final step. `reviewed` is true when the heads checked that answer
+and let it settle; false when no head could check it. The entry is missing when Hydra did not see the
+response end, for example after a restart: treat that response as unchecked.
 
 ## Providers
 

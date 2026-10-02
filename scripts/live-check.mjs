@@ -11,7 +11,7 @@ import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { defineTool, init, useModel, useTool } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
-import { createFlueHydra } from "../dist/index.js";
+import { createFlueHydra, HYDRA_METADATA_KEY } from "../dist/index.js";
 
 const route = process.argv[2];
 const setup = { anthropic: [anthropicProvider, "claude-opus-5-5"], codex: [openaiCodexProvider, "gpt-5.5"] }[route];
@@ -32,7 +32,6 @@ tools: []
 Check every product the assistant states in its answer by doing the multiplication yourself. If a stated product is wrong, steer with the correct value and say which source was wrong. Report nothing if every product is right.
 `);
 
-let finalText = "";
 const records = [];
 const hydra = createFlueHydra();
 
@@ -46,7 +45,7 @@ function Calculator() {
 		input: v.object({ a: v.number(), b: v.number() }),
 		run: ({ data }) => String(data.a * data.b + 10), // deliberately wrong
 	}));
-	hydra.useHydra([join(heads, "arithmetic.md")], { onRecord: (record) => records.push(record), onFinal: ({ text }) => (finalText = text) });
+	hydra.useHydra([join(heads, "arithmetic.md")], { onRecord: (record) => records.push(record) });
 	return `Use the multiply tool for every multiplication and report exactly the number it returns. Do not do arithmetic yourself unless a reviewer's feedback says a result is wrong; then work it out and give the corrected answer.\n\nBackground reading (unrelated to the task):\n${docs}`;
 }
 
@@ -68,8 +67,8 @@ console.log(JSON.stringify({
 	route,
 	reply: reply.text,
 	// Judged on the final step only: a corrected reply text also holds the wrong first answer.
-	correct: finalText.replace(/[,\s.]/g, "").includes("5472661"),
-	finalText,
+	correct: (reply.metadata?.[HYDRA_METADATA_KEY]?.final ?? "").replace(/[,\s.]/g, "").includes("5472661"),
+	hydra: reply.metadata?.[HYDRA_METADATA_KEY],
 	seconds: Math.round((Date.now() - startedAt) / 100) / 10,
 	hydraSignalsSeen: signals,
 	records: records.map((record) => ({ ...record, findings: record.findings.map((f) => `${f.action}: ${f.message}`) })),

@@ -12,7 +12,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
-import { instrument, useAgentFinish, useAgentStart } from "@flue/runtime";
+import { instrument, useAgentFinish, useAgentStart, useResponseFinish } from "@flue/runtime";
 import type { AgentFinishContext, FlueInstrumentation } from "@flue/runtime";
 import type { AssistantMessage, Message, Model, Provider, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { cleanupSessionResources } from "@earendil-works/pi-ai";
@@ -52,13 +52,24 @@ export interface FlueHydraOptions {
 export interface UseHydraOptions {
 	/** Called once per head check of this agent. */
 	onRecord?: (record: HydraRecord) => void;
-	/**
-	 * Called once when a checked response is about to settle, with the text of its final step: the answer
-	 * the heads left standing. Flue's reply text (`AgentReply.text`) of a corrected response also contains
-	 * the earlier, corrected answers. Not called when no request of the response was recorded.
-	 */
-	onFinal?: (final: { text: string }) => void;
 }
+
+/**
+ * What Hydra adds to the metadata of each response it reviewed (`AgentReply.metadata["pi-hydra"]`).
+ * Missing when the response's end was not observed, for example after a restart.
+ */
+export interface HydraResponseMetadata {
+	/** The heads checked the response's final answer and let it settle. False when no check could run. */
+	reviewed: boolean;
+	/**
+	 * The text of the response's final step: the answer the heads left standing. Flue's reply text
+	 * (`AgentReply.text`) joins every step, so a corrected reply also holds the earlier answers.
+	 */
+	final: string;
+}
+
+/** The key of Hydra's response metadata. */
+export const HYDRA_METADATA_KEY = "pi-hydra";
 
 export interface HydraRecord {
 	conversationId: string;
@@ -118,6 +129,8 @@ interface Conversation {
 	tail: Message[] | null;
 	rounds: number;
 	ledger: DeliveryLedger;
+	/** The last review ran the heads and let the response settle. */
+	reviewed: boolean;
 }
 
 function loadHead(path: string): HeadDefinition {
@@ -174,7 +187,7 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 
 	const conversation = (id: string): Conversation => {
 		let state = conversations.get(id);
-		if (!state) conversations.set(id, (state = { capture: null, tail: null, rounds: 0, ledger: new DeliveryLedger() }));
+		if (!state) conversations.set(id, (state = { capture: null, tail: null, rounds: 0, ledger: new DeliveryLedger(), reviewed: false }));
 		return state;
 	};
 
@@ -303,7 +316,7 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 		}
 	}
 
-	async function review(ctx: AgentFinishContext, heads: HeadDefinition[], { onRecord, onFinal }: UseHydraOptions): Promise<void> {
+	async function review(ctx: AgentFinishContext, heads: HeadDefinition[], { onRecord }: UseHydraOptions): Promise<void> {
 		const current = scope.getStore();
 		const conversationId = current?.conversationId;
 		const state = conversationId ? conversations.get(conversationId) : undefined;
@@ -318,11 +331,12 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 			failAll(conversationId ?? "unknown", 0, "no-capture", "no recorded request for this response; is the agent's provider wrapped with hydra.wrap()?");
 			return;
 		}
-		// Returns whether feedback was appended, so the response goes on instead of settling.
-		const steer = async (capture: Capture): Promise<boolean> => {
+		// "steered": feedback was appended and the response goes on; "settled": the heads ran and let it
+		// settle; "failed": no head could check it.
+		const steer = async (capture: Capture): Promise<"steered" | "settled" | "failed"> => {
 			if (!SUPPORTED_APIS.has(capture.model.api as string)) {
 				failAll(conversationId, state.rounds, "unsupported-api", `provider API ${capture.model.api} is not supported (anthropic-messages, openai-codex-responses)`);
-				return false;
+				return "failed";
 			}
 			const records = await Promise.all(heads.map((head) => check(head, state, conversationId, ctx.signal)));
 			const steering = (record: HydraRecord) => record.findings.some((decision) => decision.action !== "print");
@@ -337,21 +351,28 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 					} else steers.push({ head: record.head, decision });
 				}
 			}
-			if (steers.length === 0) return false;
+			if (steers.length === 0) return records.every((record) => record.outcome === "failed") ? "failed" : "settled";
 			const body = steers.map(({ head, decision }) => `[pi-hydra ${head}] ${decision.message}`).join("\n");
 			if (unresolved) {
 				ctx.log.warn(`[pi-hydra] unresolved after ${maxRounds} rounds of feedback; the response settles with these findings open:\n${body}`);
-				return false;
+				return "settled";
 			}
 			ctx.append({ kind: "signal", type: "pi-hydra", tagName: "pi-hydra", body });
 			for (const { head, decision } of steers) state.ledger.succeed({ head, delivery: "steer", message: decision.message });
 			state.rounds++;
-			return true;
+			return "steered";
 		};
-		if (await steer(state.capture)) return;
-		// The response settles: its final step is the answer the heads left standing.
+		state.reviewed = (await steer(state.capture)) === "settled";
+	}
+
+	// The response's true end, after every finish hook: report the answer the heads left standing.
+	function metadata(): Record<string, unknown> | void {
+		const id = scope.getStore()?.conversationId;
+		const state = id ? conversations.get(id) : undefined;
+		if (!state) return;
 		const final = state.tail?.find((message): message is AssistantMessage => message.role === "assistant");
-		onFinal?.({ text: final ? final.content.filter((part) => part.type === "text").map((part) => part.text).join("") : "" });
+		const text = final ? final.content.filter((part) => part.type === "text").map((part) => part.text).join("") : "";
+		return { [HYDRA_METADATA_KEY]: { reviewed: state.reviewed, final: text } satisfies HydraResponseMetadata };
 	}
 
 	return {
@@ -363,10 +384,17 @@ export function createFlueHydra(options: FlueHydraOptions = {}): FlueHydra {
 				if (id) conversation(id);
 			});
 			useAgentFinish((ctx) => review(ctx, heads, options));
+			useResponseFinish(metadata);
 		},
 		close: async () => {
-			await uninstall();
-			for (const sessionId of sessions) cleanupSessionResources(sessionId);
+			// Every resource gets its cleanup attempt; failures are reported together afterwards.
+			const errors: unknown[] = [];
+			try { await uninstall(); } catch (error) { errors.push(error); }
+			for (const sessionId of sessions) {
+				try { cleanupSessionResources(sessionId); } catch (error) { errors.push(error); }
+			}
+			sessions.clear();
+			if (errors.length) throw new AggregateError(errors, "pi-hydra: close() could not release everything");
 		},
 	};
 }

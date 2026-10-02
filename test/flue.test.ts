@@ -7,9 +7,10 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import * as v from "valibot";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { defineTool, GeneralSubagent, init, observe, useModel, useSubagent, useTool } from "@flue/runtime";
+import { registerSessionResourceCleanup } from "@earendil-works/pi-ai";
+import { defineTool, GeneralSubagent, init, observe, useAgentFinish, useModel, useSubagent, useTool } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
-import { checkHeads, createFlueHydra, supportsApi, type FlueHydra, type HydraRecord } from "../src/index.ts";
+import { checkHeads, createFlueHydra, HYDRA_METADATA_KEY, supportsApi, type FlueHydra, type HydraRecord } from "../src/index.ts";
 
 type Sent = { messages: { role: string; content: { type: string; text: string }[] }[]; options?: { sessionId?: string; transport?: string } };
 const text = (sent: Sent) => JSON.stringify(sent.messages);
@@ -65,9 +66,7 @@ async function run(options: { api?: string; heads?: string[]; maxRounds?: number
 	const h = hydra;
 	const heads = options.heads ?? [headFile("checker")];
 	const onRecord = (record: HydraRecord) => records.push(record);
-	const finals: string[] = [];
-	const onFinal = ({ text }: { text: string }) => finals.push(text);
-	const Agent = options.agent?.(h, heads, onRecord) ?? function Agent() { useModel("test/m"); h.useHydra(heads, { onRecord, onFinal }); return "You answer questions."; };
+	const Agent = options.agent?.(h, heads, onRecord) ?? function Agent() { useModel("test/m"); h.useHydra(heads, { onRecord }); return "You answer questions."; };
 	runtime = await start({ agents: [{ agent: Agent, name: "agent" }], providers: [h.wrap(model.provider)] });
 	const handle = init(Agent);
 	const replies: any[] = [];
@@ -76,7 +75,8 @@ async function run(options: { api?: string; heads?: string[]; maxRounds?: number
 		replies.push(options.tolerateFailures ? await reply.catch((error: unknown) => error) : await reply);
 	}
 	unobserve();
-	return { replies, records, finals, logs, sent: model.sent };
+	const hydraMetadata = replies.map((reply) => reply?.metadata?.[HYDRA_METADATA_KEY]);
+	return { replies, records, hydraMetadata, logs, sent: model.sent };
 }
 
 describe("pi-hydra heads in Flue", () => {
@@ -85,9 +85,9 @@ describe("pi-hydra heads in Flue", () => {
 			driver: (_sent, i) => fauxAssistantMessage(i === 0 ? "17 × 23 = 401" : "Corrected: 391"),
 			head: (_sent, i) => (i === 0 ? findings({ action: "steer", message: "17 × 23 is 391 <not 401> & check \"tools\"" }) : findings()),
 		});
-		// Flue's reply text holds the whole response, the corrected answer included; onFinal has only the final step.
+		// Flue's reply text holds the whole response, the wrong first answer included; the metadata has the final step.
 		expect(result.replies[0].text).toBe("17 × 23 = 401\n\nCorrected: 391");
-		expect(result.finals).toEqual(["Corrected: 391"]);
+		expect(result.hydraMetadata).toEqual([{ reviewed: true, final: "Corrected: 391" }]);
 		expect(result.records.map((r) => [r.round, r.outcome])).toEqual([[0, "findings"], [1, "none"]]);
 		const [driver1, head1, driver2] = result.sent;
 		// The head replays the driver's request unchanged, then the final answer, then its prompt.
@@ -240,10 +240,48 @@ describe("pi-hydra heads in Flue", () => {
 		expect(records.map((r) => r.outcome)).toEqual(["none"]);
 	});
 
+	it("the response metadata has the final answer after every finish hook, also when another hook keeps it going", async () => {
+		let appended = false;
+		const result = await run({
+			agent: (h, heads, onRecord) => function Agent() {
+				useModel("test/m");
+				h.useHydra(heads, { onRecord });
+				useAgentFinish((ctx) => { if (!appended) { appended = true; ctx.append({ kind: "signal", type: "another-check", body: "Please correct once more." }); } });
+				return "Answer.";
+			},
+			driver: (_sent, i) => fauxAssistantMessage(i === 0 ? "old answer" : "new answer"),
+			head: () => findings(),
+		});
+		expect(result.replies[0].text).toBe("old answer\n\nnew answer");
+		expect(result.hydraMetadata).toEqual([{ reviewed: true, final: "new answer" }]);
+	});
+
+	it("close() tries to release every session even when one cleanup fails", async () => {
+		const model = scripted("openai-codex-responses", () => fauxAssistantMessage("answer"), () => findings());
+		const h = createFlueHydra();
+		hydra = h;
+		const heads = [headFile("checker")];
+		function Agent() { useModel("test/m"); h.useHydra(heads); return "Answer."; }
+		runtime = await start({ agents: [{ agent: Agent, name: "agent" }], providers: [h.wrap(model.provider)] });
+		for (let i = 0; i < 2; i++) {
+			const handle = init(Agent);
+			await handle.read(await handle.dispatch("go"));
+		}
+		const ids = [...new Set(model.sent.map((s) => s.options?.sessionId))];
+		expect(ids).toHaveLength(2);
+		await runtime.stop();
+		runtime = undefined;
+		const cleaned: string[] = [];
+		const unregister = registerSessionResourceCleanup((id) => { cleaned.push(id!); if (id === ids[0]) throw new Error("injected cleanup failure"); });
+		try { await expect(h.close()).rejects.toThrow(AggregateError); } finally { unregister(); hydra = undefined; }
+		expect(cleaned).toEqual(ids);
+	});
+
 	it("an unsupported provider API is reported, not silently skipped", async () => {
 		const result = await run({ api: "test-api", driver: () => fauxAssistantMessage("391"), head: () => findings() });
 		expect(result.records[0]).toMatchObject({ outcome: "failed", errorKind: "unsupported-api" });
 		expect(result.sent.some(isHeadRequest)).toBe(false);
+		expect(result.hydraMetadata).toEqual([{ reviewed: false, final: "391" }]);
 	});
 
 	it("an agent whose provider is not wrapped reports that heads could not run", async () => {
