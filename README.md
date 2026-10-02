@@ -168,8 +168,8 @@ node scripts/live-check.mjs anthropic   # or codex
 
 It asks for 1847 × 2963 and prints the reply, each check and its cache numbers. Passing means
 `"correct": true` with one `pi-hydra` signal, unless the model noticed the wrong tool result on its own.
-Heads are models and can miss: in 1 of the 11 Codex runs above, the head returned no finding on the wrong
-answer.
+Heads are models and can miss: in 2 of 16 Codex runs on October 2, the head returned no finding on the
+wrong answer.
 
 ## Development
 
