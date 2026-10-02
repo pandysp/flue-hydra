@@ -8,7 +8,8 @@
  * the response settles; notes for people are written to the conversation log.
  *
  * Wiring: `createFlueHydra()` once, `hydra.wrap(provider)` for the agent's model provider, and
- * `hydra.useHydra()` inside the agent function. See ../docs/flue.md.
+ * `hydra.useHydra(heads)` inside the agent function. The answer the heads left standing is in the
+ * response's metadata (`HYDRA_METADATA_KEY`). See README.md.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
@@ -120,7 +121,7 @@ interface Capture {
 // Codex routes its cache by provider session, so heads hit the driver's cache dependably only on
 // the driver's session. That is safe only while the driver sends its full input every turn; with
 // pi-ai's default `auto` (continuation) a head on the same session can break the driver's next
-// request. docs/providers.md#session-sharing has the measurements.
+// request. pi-hydra's docs/providers.md#session-sharing and this package's README have the measurements.
 const FULL_INPUT_TRANSPORTS = new Set(["websocket", "sse"]);
 
 interface Conversation {
