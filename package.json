@@ -46,7 +46,7 @@
 		"@flue/runtime": "2.2.2",
 		"@types/node": "^22",
 		"esbuild": "^0.25",
-		"pi-hydra": "git+https://github.com/pandysp/pi-hydra.git#aa98e5767580bd214ed80806685d111e0eb373d1",
+		"pi-hydra": "git+https://github.com/pandysp/pi-hydra.git#2db7d087438c419debae3209d9754089c0c5b8b5",
 		"rollup": "^4",
 		"rollup-plugin-dts": "^6",
 		"typescript": "^5.9",
